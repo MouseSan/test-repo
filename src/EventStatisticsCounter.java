@@ -14,7 +14,8 @@ public interface EventStatisticsCounter {
     /**
      * Method add a new event to the statistics counter.
      *
-     * @param timeOfEvent - time at which event is happened.
+     * @param timeOfEvent - time at which event is happened,
+     *                      must be less than current date (date of method invocation)
      */
     void addEvent(LocalDateTime timeOfEvent);
 
