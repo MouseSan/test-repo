@@ -1,12 +1,19 @@
 import java.time.LocalDateTime;
 import java.time.temporal.ChronoUnit;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLongArray;
 import java.util.concurrent.locks.ReentrantLock;
 
+/**
+ *
+ *
+ * @author Viacheslav Myshkovetc
+ */
 public class EventStatisticsCounterImpl implements EventStatisticsCounter {
 
     private final static int SECONDS_IN_MINUTE = 60;
@@ -23,7 +30,7 @@ public class EventStatisticsCounterImpl implements EventStatisticsCounter {
 
 
     public EventStatisticsCounterImpl() {
-        this.startTime = LocalDateTime.now();
+        startTime = LocalDateTime.now();
         startScheduledTaskClearArray();
         cachedPool = Executors.newCachedThreadPool();
         lock = new ReentrantLock();
@@ -40,15 +47,15 @@ public class EventStatisticsCounterImpl implements EventStatisticsCounter {
         long position = seconds % SECONDS_IN_THREE_DAYS;
 
         if (position < SECONDS_IN_DAY) {
-            resetArray(0, SECONDS_IN_DAY - 1);
+            setArrayValuesToZero(0, SECONDS_IN_DAY - 1);
         } else if (position < SECONDS_IN_DAY * 2) {
-            resetArray(SECONDS_IN_DAY, SECONDS_IN_DAY * 2 - 1);
+            setArrayValuesToZero(SECONDS_IN_DAY, SECONDS_IN_DAY * 2 - 1);
         } else {
-            resetArray(SECONDS_IN_DAY * 2, SECONDS_IN_THREE_DAYS - 1);
+            setArrayValuesToZero(SECONDS_IN_DAY * 2, SECONDS_IN_THREE_DAYS - 1);
         }
     }
 
-    private void resetArray(int startIndex, int lastIndex) {
+    private void setArrayValuesToZero(int startIndex, int lastIndex) {
         for (int i = startIndex; i <= lastIndex; i++) {
             counter.getAndSet(i, 0L);
         }
@@ -59,12 +66,15 @@ public class EventStatisticsCounterImpl implements EventStatisticsCounter {
         cachedPool.shutdown();
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
-    public void addEvent(LocalDateTime dateTime) {
+    public void addEvent(LocalDateTime timeOfEvent) {
         cachedPool.submit(() -> {
-            validateTime(dateTime);
+            validateTime(timeOfEvent);
             while (lock.isLocked()){}
-            counter.getAndIncrement(getCurrentPosition(dateTime));
+            counter.getAndIncrement(getCurrentPosition(timeOfEvent));
         });
     }
 
@@ -79,29 +89,50 @@ public class EventStatisticsCounterImpl implements EventStatisticsCounter {
         return (int) (seconds % SECONDS_IN_THREE_DAYS);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public long getNumberOfEventsForLastMinute() {
-        return getNumberOfEventsForLastSeconds(SECONDS_IN_MINUTE);
+        return putTaskToCachedPoolAndGetResult(SECONDS_IN_MINUTE);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public long getNumberOfEventsForLastHour() {
-        return getNumberOfEventsForLastSeconds(SECONDS_IN_HOUR);
+        return putTaskToCachedPoolAndGetResult(SECONDS_IN_HOUR);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public long getNumberOfEventsForLastDay() {
-        return getNumberOfEventsForLastSeconds(SECONDS_IN_DAY);
+        return putTaskToCachedPoolAndGetResult(SECONDS_IN_DAY);
     }
 
+    private long putTaskToCachedPoolAndGetResult(int numberOfSeconds) {
+        Future<Long> callableFuture = cachedPool.submit(() -> getNumberOfEventsForLastSeconds(numberOfSeconds));
+
+        long result = 0;
+        try {
+            result = callableFuture.get();
+        } catch (InterruptedException | ExecutionException e) {
+            e.printStackTrace();
+        }
+        return result;
+    }
 
     private long getNumberOfEventsForLastSeconds(int numberOfSeconds) {
         int numberOfEvents = 0;
-        int currentPosition = getCurrentPosition(LocalDateTime.now());
 
         try {
             if (lock.tryLock() || lock.tryLock(numberOfSeconds, TimeUnit.MICROSECONDS)) {
                 try {
+                    int currentPosition = getCurrentPosition(LocalDateTime.now());
+
                     if (currentPosition >= numberOfSeconds) {
                         for(int i = currentPosition - numberOfSeconds; i < currentPosition; i++){
                             numberOfEvents += counter.get(i);
